@@ -10,7 +10,7 @@ Game Boy emulation touches almost everything I want to improve at: bitwise opera
 
 ## Current Goal
 
-Right now the emulator can load ROMs and execute a basic fetch-decode loop with a few supported opcodes. Code size: ~295 LOC total.
+Right now the emulator can load ROMs and execute a basic fetch-decode loop with a few supported opcodes. SDL2 window renders a green screen. Code size: ~300 LOC total.
 
 Accuracy isn't the priority—learning is. But surprisingly, the code is already shaping up to be pretty accurate anyway.
 
@@ -23,10 +23,11 @@ Implemented:
 - PPU struct with LCD registers
 - Centralized emulator state in a single `GameBoy` struct
 - Modular file layout under `src/core/` and `src/platform/`
+- SDL2 platform: window, event loop, green screen render
 
-Working on: PPU stepping, rendering, full opcode decode table.
+Working on: PPU stepping, full opcode decode table, actual rendering.
 
-Future: timers, interrupts, input handling.
+Future: timers, interrupts, input handling, audio.
 
 ## Architecture
 
@@ -63,4 +64,4 @@ Test ROM included at `builds/test.gb`.
 
 **Day 4**: Added PPU struct with LCDC, STAT, SCY, SCX, LY, LYC, DMA, BGP, OBP, WX, WY registers. Platform stubs for SDL main, event polling, and rendering.
 
-Next: decode table for all ~500 opcodes, then rendering so we can see something.
+**Day 5** (2026-05-12): Implemented SDL2 platform layer - window creation (480x432), event polling, green screen render. Built successfully with `make`.
