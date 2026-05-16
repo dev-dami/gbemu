@@ -63,6 +63,36 @@ fn platformPollEvents(gb: *GameBoy) void {
         if (event.type == c.SDL_KEYDOWN and event.key.keysym.sym == c.SDLK_ESCAPE) {
             gb.running = false;
         }
+
+        // Map SDL keys to Game Boy buttons
+        const is_keydown = event.type == c.SDL_KEYDOWN;
+        const is_keyup = event.type == c.SDL_KEYUP;
+
+        if (is_keydown or is_keyup) {
+            const pressed = is_keydown;
+            const sym = event.key.keysym.sym;
+
+            // D-Pad
+            if (sym == c.SDLK_UP) {
+                gb.input.setButton(.up, pressed);
+            } else if (sym == c.SDLK_DOWN) {
+                gb.input.setButton(.down, pressed);
+            } else if (sym == c.SDLK_LEFT) {
+                gb.input.setButton(.left, pressed);
+            } else if (sym == c.SDLK_RIGHT) {
+                gb.input.setButton(.right, pressed);
+            }
+            // Buttons
+            else if (sym == c.SDLK_z) {
+                gb.input.setButton(.a, pressed);
+            } else if (sym == c.SDLK_x) {
+                gb.input.setButton(.b, pressed);
+            } else if (sym == c.SDLK_RETURN) {
+                gb.input.setButton(.start, pressed);
+            } else if (sym == c.SDLK_SPACE) {
+                gb.input.setButton(.select, pressed);
+            }
+        }
     }
 }
 
@@ -86,21 +116,76 @@ fn platformDeinit() void {
 pub fn main(init: std.process.Init) !void {
     const argv = init.minimal.args.vector;
     if (argv.len < 2) {
-        std.debug.print("Usage: gameboy <rom.gb>\n", .{});
+        std.debug.print("Usage: gameboy <rom.gb> [--debug] [--steps N]\n", .{});
         return;
     }
 
-    const rom_path = std.mem.sliceTo(argv[1], 0);
+    var rom_path: []const u8 = "";
+    var debug_mode = false;
+    var headless_steps: u32 = 0;
 
+    var i: usize = 1;
+    while (i < argv.len) : (i += 1) {
+        const arg = std.mem.sliceTo(argv[i], 0);
+        if (std.mem.eql(u8, arg, "--debug")) {
+            debug_mode = true;
+        } else if (std.mem.eql(u8, arg, "--steps")) {
+            i += 1;
+            if (i < argv.len) {
+                const steps_arg = std.mem.sliceTo(argv[i], 0);
+                headless_steps = std.fmt.parseInt(u32, steps_arg, 10) catch 0;
+            }
+        } else if (rom_path.len == 0) {
+            rom_path = arg;
+        }
+    }
+
+    if (rom_path.len == 0) {
+        std.debug.print("Usage: gameboy <rom.gb> [--debug] [--steps N]\n", .{});
+        return;
+    }
+
+    if (headless_steps > 0) {
+        // Headless test mode: run N steps and dump state
+        var gb = GameBoy.init(init.gpa);
+        gb.debug = debug_mode;
+
+        gb.loadRom(init.io, rom_path) catch |err| {
+            std.debug.print("Failed to load ROM: {s} ({})\n", .{ rom_path, err });
+            return;
+        };
+        defer gb.unloadRom();
+
+        std.debug.print("ROM loaded. Running {d} steps in headless mode...\n", .{headless_steps});
+
+        var step_count: u32 = 0;
+        while (step_count < headless_steps) : ({
+            step_count += 1;
+        }) {
+            gb.step();
+        }
+
+        std.debug.print("\n--- CPU State after {d} steps ---\n", .{step_count});
+        std.debug.print("  PC: 0x{X:0>4}  SP: 0x{X:0>4}\n", .{ gb.cpu.pc, gb.cpu.sp });
+        std.debug.print("  A: 0x{X:0>2}  F: 0x{X:0>2}  B: 0x{X:0>2}  C: 0x{X:0>2}\n", .{ gb.cpu.a, gb.cpu.f, gb.cpu.b, gb.cpu.c });
+        std.debug.print("  D: 0x{X:0>2}  E: 0x{X:0>2}  H: 0x{X:0>2}  L: 0x{X:0>2}\n", .{ gb.cpu.d, gb.cpu.e, gb.cpu.h, gb.cpu.l });
+        std.debug.print("  Z:{d} N:{d} H:{d} C:{d}\n", .{ gb.cpu.getZ(), gb.cpu.getN(), gb.cpu.getH(), gb.cpu.getC() });
+        std.debug.print("  HALTED: {}\n", .{gb.cpu.halted});
+        return;
+    }
+
+    // GUI mode
     if (!platformInit()) return;
     defer platformDeinit();
 
-    var gb = GameBoy.init();
+    var gb = GameBoy.init(init.gpa);
+    gb.debug = debug_mode;
 
-    gb.loadRom(init.io, init.gpa, rom_path) catch |err| {
+    gb.loadRom(init.io, rom_path) catch |err| {
         std.debug.print("Failed to load ROM: {s} ({})\n", .{ rom_path, err });
         return;
     };
+    defer gb.unloadRom();
 
     std.debug.print("ROM loaded, starting emulation...\n", .{});
     std.debug.print("Initial PC: 0x{X:0>4}\n", .{gb.cpu.pc});
