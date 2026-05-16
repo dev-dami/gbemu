@@ -97,5 +97,153 @@ pub const Cartridge = struct {
             self.allocator.free(data);
             self.rom_data = null;
         }
+        if (self.ram_data) |data| {
+            self.allocator.free(data);
+            self.ram_data = null;
+        }
+    }
+
+    pub fn readRom(self: *const Cartridge, addr: u16) u8 {
+        const rom_data = self.rom_data orelse return 0xFF;
+
+        return switch (self.cart_type) {
+            .ROM_ONLY => {
+                if (addr < rom_data.len) return rom_data[addr] else return 0xFF;
+            },
+            .MBC1, .MBC1_RAM, .MBC1_RAM_BATTERY => self.readRomMBC1(rom_data, addr),
+            .MBC5, .MBC5_RAM, .MBC5_RAM_BATTERY, .MBC5_RUMBLE, .MBC5_RUMBLE_RAM, .MBC5_RUMBLE_RAM_BATTERY => self.readRomMBC5(rom_data, addr),
+            else => if (addr < rom_data.len) rom_data[addr] else 0xFF,
+        };
+    }
+
+    fn readRomMBC1(self: *const Cartridge, rom_data: []u8, addr: u16) u8 {
+        const rom_data_len = rom_data.len;
+
+        if (addr < 0x4000) {
+            // Bank 0 is always mapped to 0x0000-0x3FFF
+            if (addr < rom_data_len) return rom_data[addr] else return 0xFF;
+        } else if (addr < 0x8000) {
+            // Switchable bank mapped to 0x4000-0x7FFF
+            var bank = self.rom_bank & 0x1F; // bits 0-4
+            if (self.banking_mode == 0) {
+                // ROM mode: use upper bits from ram_bank
+                bank |= (@as(u16, self.ram_bank & 0x03) << 5);
+            }
+            if (bank == 0) bank = 1; // Bank 0 is invalid in switchable area
+
+            const offset = (@as(usize, bank) * 0x4000) + (addr - 0x4000);
+            if (offset < rom_data_len) return rom_data[offset] else return 0xFF;
+        }
+        return 0xFF;
+    }
+
+    fn readRomMBC5(self: *const Cartridge, rom_data: []u8, addr: u16) u8 {
+        const rom_data_len = rom_data.len;
+
+        if (addr < 0x4000) {
+            // Bank 0 is always mapped to 0x0000-0x3FFF
+            if (addr < rom_data_len) return rom_data[addr] else return 0xFF;
+        } else if (addr < 0x8000) {
+            // Switchable bank mapped to 0x4000-0x7FFF
+            const bank = self.rom_bank & 0x1FF; // 9-bit bank number
+            const offset = (@as(usize, bank) * 0x4000) + (addr - 0x4000);
+            if (offset < rom_data_len) return rom_data[offset] else return 0xFF;
+        }
+        return 0xFF;
+    }
+
+    pub fn readRam(self: *const Cartridge, addr: u16) u8 {
+        if (!self.ram_enabled) return 0xFF;
+        if (self.ram_data == null) return 0xFF;
+
+        const ram_data = self.ram_data.?;
+        const ram_size = ram_data.len;
+
+        return switch (self.cart_type) {
+            .MBC1_RAM, .MBC1_RAM_BATTERY => {
+                if (addr >= 0xA000 and addr < 0xC000) {
+                    const offset = (@as(usize, self.ram_bank & 0x03) * 0x2000) + (addr - 0xA000);
+                    if (offset < ram_size) return ram_data[offset] else return 0xFF;
+                }
+                return 0xFF;
+            },
+            .MBC5_RAM, .MBC5_RAM_BATTERY, .MBC5_RUMBLE_RAM, .MBC5_RUMBLE_RAM_BATTERY => {
+                if (addr >= 0xA000 and addr < 0xC000) {
+                    const offset = (@as(usize, self.ram_bank & 0x0F) * 0x2000) + (addr - 0xA000);
+                    if (offset < ram_size) return ram_data[offset] else return 0xFF;
+                }
+                return 0xFF;
+            },
+            else => 0xFF,
+        };
+    }
+
+    pub fn writeRom(self: *Cartridge, addr: u16, val: u8) void {
+        switch (self.cart_type) {
+            .ROM_ONLY => {},
+            .MBC1, .MBC1_RAM, .MBC1_RAM_BATTERY => self.writeRomMBC1(addr, val),
+            .MBC5, .MBC5_RAM, .MBC5_RAM_BATTERY, .MBC5_RUMBLE, .MBC5_RUMBLE_RAM, .MBC5_RUMBLE_RAM_BATTERY => self.writeRomMBC5(addr, val),
+            else => {},
+        }
+    }
+
+    fn writeRomMBC1(self: *Cartridge, addr: u16, val: u8) void {
+        if (addr < 0x2000) {
+            // RAM enable register
+            self.ram_enabled = (val & 0x0F) == 0x0A;
+        } else if (addr < 0x4000) {
+            // ROM bank number (bits 0-4)
+            self.rom_bank = (self.rom_bank & 0xE0) | (@as(u16, val & 0x1F));
+            if ((self.rom_bank & 0x1F) == 0) {
+                self.rom_bank = (self.rom_bank & 0xE0) | 1;
+            }
+        } else if (addr < 0x6000) {
+            // RAM bank or upper ROM bank bits
+            self.ram_bank = val & 0x03;
+        } else if (addr < 0x8000) {
+            // Banking mode select
+            self.banking_mode = val & 0x01;
+        }
+    }
+
+    fn writeRomMBC5(self: *Cartridge, addr: u16, val: u8) void {
+        if (addr < 0x2000) {
+            // RAM enable register
+            self.ram_enabled = (val & 0x0F) == 0x0A;
+        } else if (addr < 0x3000) {
+            // ROM bank low (bits 0-7)
+            self.rom_bank = (self.rom_bank & 0x100) | @as(u16, val);
+        } else if (addr < 0x4000) {
+            // ROM bank high (bit 8)
+            self.rom_bank = (self.rom_bank & 0x0FF) | (@as(u16, val & 0x01) << 8);
+        } else if (addr < 0x6000) {
+            // RAM bank (bits 0-3)
+            self.ram_bank = val & 0x0F;
+        }
+    }
+
+    pub fn writeRam(self: *Cartridge, addr: u16, val: u8) void {
+        if (!self.ram_enabled) return;
+        if (self.ram_data == null) return;
+
+        const ram_data = self.ram_data.?;
+        const ram_size = ram_data.len;
+
+        if (addr >= 0xA000 and addr < 0xC000) {
+            var offset: usize = 0;
+            switch (self.cart_type) {
+                .MBC1_RAM, .MBC1_RAM_BATTERY => {
+                    offset = (@as(usize, self.ram_bank & 0x03) * 0x2000) + (addr - 0xA000);
+                },
+                .MBC5_RAM, .MBC5_RAM_BATTERY, .MBC5_RUMBLE_RAM, .MBC5_RUMBLE_RAM_BATTERY => {
+                    offset = (@as(usize, self.ram_bank & 0x0F) * 0x2000) + (addr - 0xA000);
+                },
+                else => return,
+            }
+
+            if (offset < ram_size) {
+                ram_data[offset] = val;
+            }
+        }
     }
 };
