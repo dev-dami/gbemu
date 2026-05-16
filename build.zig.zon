@@ -1,0 +1,8 @@
+.{
+    .name = .gameboy,
+    .version = "0.0.0",
+    .fingerprint = 0xfd6064999a2eb4ab,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{""},
+    .dependencies = .{},
+}
