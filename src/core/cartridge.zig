@@ -49,6 +49,47 @@ pub const Cartridge = struct {
         }
 
         self.rom_data = rom_data;
+
+        // Parse cartridge header
+        if (rom_data.len >= 0x150) {
+            self.cart_type = @enumFromInt(rom_data[0x0147]);
+            self.parseRomSize(rom_data[0x0148]);
+            self.parseRamSize(rom_data[0x0149]);
+
+            // Allocate external RAM based on size
+            if (self.ram_size_kb > 0) {
+                const ram_bytes = self.ram_size_kb * 1024;
+                self.ram_data = try self.allocator.alloc(u8, ram_bytes);
+                @memset(self.ram_data.?, 0);
+            }
+        }
+    }
+
+    fn parseRomSize(self: *Cartridge, size_byte: u8) void {
+        self.rom_size_kb = switch (size_byte) {
+            0x00 => 32,
+            0x01 => 64,
+            0x02 => 128,
+            0x03 => 256,
+            0x04 => 512,
+            0x05 => 1024,
+            0x06 => 2048,
+            0x07 => 4096,
+            0x08 => 8192,
+            else => 32,
+        };
+    }
+
+    fn parseRamSize(self: *Cartridge, size_byte: u8) void {
+        self.ram_size_kb = switch (size_byte) {
+            0x00 => 0,
+            0x01 => 2,
+            0x02 => 8,
+            0x03 => 32,
+            0x04 => 128,
+            0x05 => 64,
+            else => 0,
+        };
     }
 
     pub fn unload(self: *Cartridge) void {
