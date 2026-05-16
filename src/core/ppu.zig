@@ -1,3 +1,4 @@
+const std = @import("std");
 const Memory = @import("memory.zig").Memory;
 
 // LCD Control (LCDC) bit flags
@@ -97,7 +98,18 @@ pub const PPU = struct {
         }
     }
 
-    pub fn step(self: *PPU, mem: *const Memory, framebuffer: []u8) void {
+    pub fn step(self: *PPU, mem: *Memory, framebuffer: []u8) void {
+        // Read LCDC from IO registers
+        self.lcdc = mem.read(0xFF40);
+        self.scy = mem.read(0xFF42);
+        self.scx = mem.read(0xFF43);
+        self.lyc = mem.read(0xFF45);
+        const bgp = mem.read(0xFF47);
+        self.bgp[0] = bgp & 0x03;
+        self.bgp[1] = (bgp >> 2) & 0x03;
+        self.bgp[2] = (bgp >> 4) & 0x03;
+        self.bgp[3] = (bgp >> 6) & 0x03;
+
         if (self.lcdc & LCDC_LCD_ENABLE == 0) {
             self.mode = PPU_MODE_HBLANK;
             self.ly = 0;
@@ -119,6 +131,9 @@ pub const PPU = struct {
                 self.mode = PPU_MODE_OAM;
                 if (self.ly >= PPU_HEIGHT) {
                     self.mode = PPU_MODE_VBLANK;
+                    // Trigger VBlank interrupt
+                    const if_reg = mem.read(0xFF0F);
+                    mem.write(0xFF0F, if_reg | 0x01);
                 }
             }
         } else if (self.ly < PPU_SCANLINES) {
@@ -140,5 +155,9 @@ pub const PPU = struct {
 
         self.stat = (self.stat & 0xFC) | self.mode;
         if (self.ly == self.lyc) self.stat |= 0x04;
+
+        // Write STAT back to IO
+        mem.write(0xFF41, self.stat);
+        mem.write(0xFF44, self.ly);
     }
 };
